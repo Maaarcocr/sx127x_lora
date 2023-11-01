@@ -146,10 +146,9 @@
 //! device-to-device basis by retrieving a packet with the `read_packet()` function.
 
 use bit_field::BitField;
-use embedded_hal::blocking::delay::DelayMs;
-use embedded_hal::blocking::spi::{Transfer, Write};
-use embedded_hal::digital::v2::OutputPin;
-use embedded_hal::spi::{Mode, Phase, Polarity};
+use embedded_hal::delay::DelayUs;
+use embedded_hal::digital::OutputPin;
+use embedded_hal::spi::{Mode, Phase, Polarity, SpiDevice};
 
 mod register;
 use self::register::PaConfig;
@@ -193,7 +192,7 @@ const VERSION_CHECK: u8 = 0x09;
 
 impl<SPI, CS, RESET, E> LoRa<SPI, CS, RESET>
 where
-    SPI: Transfer<u8, Error = E> + Write<u8, Error = E>,
+    SPI: SpiDevice<Error = E>,
     CS: OutputPin,
     RESET: OutputPin,
 {
@@ -204,7 +203,7 @@ where
         cs: CS,
         reset: RESET,
         frequency: i64,
-        delay: &mut dyn DelayMs<u8>,
+        delay: &mut dyn DelayUs,
     ) -> Result<Self, Error<E, CS::Error, RESET::Error>> {
         let mut sx127x = LoRa {
             spi,
@@ -241,7 +240,7 @@ where
     pub fn configure<F>(
         &mut self,
         modifier: F,
-        delay: &mut dyn DelayMs<u8>,
+        delay: &mut dyn DelayUs,
     ) -> Result<(), Error<E, CS::Error, RESET::Error>>
     where
         F: FnOnce(&mut Self) -> Result<(), Error<E, CS::Error, RESET::Error>>,
@@ -250,6 +249,17 @@ where
         self.set_mode(RadioMode::Sleep)?;
         modifier(self)?;
         self.cs.set_high().map_err(CS)?;
+        Ok(())
+    }
+
+    pub fn reset(
+        &mut self,
+        delay: &mut dyn DelayUs,
+    ) -> Result<(), Error<E, CS::Error, RESET::Error>> {
+        self.reset.set_low().map_err(Reset)?;
+        delay.delay_ms(10);
+        self.reset.set_high().map_err(Reset)?;
+        delay.delay_ms(10);
         Ok(())
     }
 
@@ -322,7 +332,7 @@ where
     pub fn poll_irq(
         &mut self,
         timeout_ms: Option<i32>,
-        delay: &mut dyn DelayMs<u8>,
+        delay: &mut dyn DelayUs,
     ) -> Result<usize, Error<E, CS::Error, RESET::Error>> {
         self.set_mode(RadioMode::RxContinuous)?;
         match timeout_ms {
@@ -692,7 +702,8 @@ where
         self.cs.set_low().map_err(CS)?;
 
         let mut buffer = [reg & 0x7f, 0];
-        let transfer = self.spi.transfer(&mut buffer).map_err(SPI)?;
+        let transfer = [0, 0];
+        self.spi.transfer(&mut buffer, &transfer).map_err(SPI)?;
         self.cs.set_high().map_err(CS)?;
         Ok(transfer[1])
     }
